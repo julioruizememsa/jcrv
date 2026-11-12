@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>EMEMSA - Inventario QR</title>
+<meta name="theme-color" content="#0b3d91">
+<link rel="manifest" href="manifest.json">
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<style>
+*{box-sizing:border-box} body{font-family:system-ui,Arial;margin:0;background:#eef1f5}
+header{background:#0b3d91;color:#fff;padding:14px 16px;position:sticky;top:0;z-index:10}
+header h1{margin:0;font-size:18px} header p{margin:2px 0 0;font-size:12px;opacity:.85}
+main{padding:12px;padding-bottom:90px;max-width:720px;margin:auto}
+.card{background:#fff;border-radius:14px;padding:14px;margin:10px 0;box-shadow:0 2px 8px rgba(0,0,0,.08)}
+.btn{width:100%;padding:14px;border:0;border-radius:10px;font-size:16px;font-weight:700;cursor:pointer;margin-top:8px}
+.btn-blue{background:#0b5ed7;color:#fff} .btn-dark{background:#111;color:#fff} .btn-green{background:#0a7a42;color:#fff} .btn-outline{background:#fff;border:1px solid #ccc}
+input,select{width:100%;padding:13px;border-radius:10px;border:1px solid #ccc;font-size:16px;margin:6px 0}
+#reader{border-radius:12px;overflow:hidden;background:#000;min-height:260px}
+#video{width:100%;border-radius:12px;background:#000;display:none}
+.kpi{display:flex;gap:8px} .kpi div{flex:1;background:#f0f7ff;border-radius:10px;padding:10px;text-align:center}
+.kpi b{font-size:22px;display:block}
+table{width:100%;border-collapse:collapse;font-size:13px} th{text-align:left;background:#f2f2f2;padding:8px} td{padding:8px;border-bottom:1px solid #eee}
+.badge{display:inline-block;padding:3px 8px;border-radius:20px;font-size:11px;font-weight:700}
+.ok{background:#d9f7e3;color:#0a7a42} .warn{background:#ffe9a8;color:#7a5a00} .bad{background:#ffd6d6;color:#a00}
+.small{font-size:12px;color:#666} .art{font-size:16px;font-weight:800}
+.diff-neg{color:#c00;font-weight:800} .diff-pos{color:#0a7a42;font-weight:800}
+</style>
+</head>
+<body>
+<header><h1>📦 EMEMSA - INVENTARIO QR</h1><p>Escanea Código • Registra Cantidad Encontrada • Solo lectura OneDrive</p></header>
+<main>
+
+<!-- ESCANER -->
+<div class="card">
+  <b>1. Escanear QR del artículo</b>
+  <p class="small">Tu QR contiene el <b>Código del artículo</b> ej: 0000000AP14. La App lo limpia automáticamente aunque venga con espacios, saltos o prefijos.</p>
+  <video id="video" playsinline muted></video>
+  <div id="reader"></div>
+  <button class="btn btn-dark" onclick="iniciarScan()">📷 INICIAR ESCÁNER</button>
+  <button class="btn btn-outline" onclick="detenerScan()">⏹ Detener cámara</button>
+  <label class="btn btn-outline" style="display:block;text-align:center">📁 O SUBIR FOTO DEL QR
+    <input type="file" id="fileQR" accept="image/*" style="display:none" onchange="leerFoto(event)">
+  </label>
+  <p class="small" id="scanStatus">Cámara lista. Requiere HTTPS y permiso de cámara.</p>
+</div>
+
+<!-- BUSQUEDA -->
+<div class="card">
+  <b>2. Buscar manual</b>
+  <input id="q" placeholder="Código ej: 0000000AP14 o Lote ej: 1-56198">
+  <button class="btn btn-blue" onclick="buscar()">🔍 CONSULTAR STOCK</button>
+  <button class="btn btn-outline" onclick="mostrarTodos()">Ver todo</button>
+</div>
+
+<div id="resumen"></div>
+<div id="detalle"></div>
+
+<!-- REGISTRO CANTIDAD ENCONTRADA -->
+<div class="card" id="conteoCard" style="display:none">
+  <b>3. Registrar Cantidad Encontrada (Inventario)</b>
+  <p class="small">No es salida. Es lo que contaste físicamente en esa ubicación / lote.</p>
+  <label>Ubicación / Lote a contar</label>
+  <select id="selLote"></select>
+  <label>Cantidad Encontrada (física)</label>
+  <input id="cantEncontrada" type="number" inputmode="numeric" placeholder="Ej: 1090">
+  <label>Observación</label>
+  <input id="obs" placeholder="Ej: Caja abierta, sin etiqueta...">
+  <div id="previewDiff" class="small"></div>
+  <button class="btn btn-green" onclick="guardarConteo()">✅ GUARDAR CONTEO</button>
+</div>
+
+<!-- HISTORIAL CONTEOS -->
+<div class="card">
+  <b>📋 Conteos guardados en este celular: <span id="nConteos">0</span></b>
+  <div id="listaConteos"></div>
+  <button class="btn btn-blue" onclick="exportarCSV()">⬇ EXPORTAR CONTEOS CSV</button>
+  <button class="btn btn-outline" onclick="borrarConteos()">🗑 Borrar conteos locales</button>
+  <p class="small">Este CSV es el que luego concilias con tu Excel de OneDrive. Aún no escribe en OneDrive.</p>
+</div>
+</main>
+
+<script>
+// ============ DATA EJEMPLO - TU CAPTURA ============
+let INVENTARIO = [
+ {almacen:"61 - PT SERIADA - LURIN", codigo:"0000000AP14", lote:"1-56198", articulo:"CASQUILLO MANG. BAJA PRESION Ø1/4\"", ubic:"E-083-05", um:"NIU", saldo:1091, comp:0, disp:1091, kilos:8.1825, prio:1},
+ {almacen:"69 - Almacen de faltantes", codigo:"0000000AP14", lote:"01-0052931", articulo:"CASQUILLO MANG. BAJA PRESION Ø1/4\"", ubic:"SIN UBICACION-S/U-S/U", um:"NIU", saldo:2, comp:0, disp:2, kilos:0.015, prio:99},
+ {almacen:"61 - PT SERIADA - LURIN", codigo:"0000000AP15", lote:"1-56199", articulo:"CASQUILLO MANG. BAJA PRESION Ø5/16\"", ubic:"E-082-01", um:"NIU", saldo:1, comp:0, disp:1, kilos:0.0113, prio:1},
+ {almacen:"61 - PT SERIADA - LURIN", codigo:"0000000AP16", lote:"01-0052871", articulo:"CASQUILLO MANG. BAJA PRESION Ø3/8\"", ubic:"E-082-04", um:"NIU", saldo:93, comp:0, disp:93, kilos:1.1811, prio:1},
+ {almacen:"69 - Almacen de faltantes", codigo:"0000000AP16", lote:"01-0052871", articulo:"CASQUILLO MANG. BAJA PRESION Ø3/8\"", ubic:"SIN UBICACION-S/U-S/U", um:"NIU", saldo:15, comp:0, disp:15, kilos:0.1905, prio:99},
+ {almacen:"61 - PT SERIADA - LURIN", codigo:"0000000AP116", lote:"", articulo:"CASQUILLO MANG. BAJA PRESION Ø1\"", ubic:"E-127A-07", um:"NIU", saldo:1282, comp:0, disp:1282, kilos:56.408, prio:1},
+ {almacen:"61 - PT SERIADA - LURIN", codigo:"0000000AP116", lote:"", articulo:"CASQUILLO MANG. BAJA PRESION Ø1\"", ubic:"E-127A-08", um:"NIU", saldo:1209, comp:0, disp:1209, kilos:53.196, prio:2},
+ {almacen:"61 - PT SERIADA - LURIN", codigo:"0000000AP120", lote:"", articulo:"CASQUILLO MANG. BAJA PRESION Ø1\" 1/4", ubic:"E-127B-08", um:"NIU", saldo:830, comp:0, disp:830, kilos:55.61, prio:1},
+];
+let actual = [];
+let conteos = JSON.parse(localStorage.getItem("ememsa_conteos")||"[]");
+renderConteos();
+
+// ============ LIMPIAR QR ============
+// Tu QR puede venir como "0000000AP14", "0000000AP14\n", "COD:0000000AP14", "http://...?cod=0000000AP14"
+function limpiarCodigo(raw){
+  if(!raw) return "";
+  let t = String(raw).trim().toUpperCase();
+  // Si es URL, sacar ultimo parametro
+  if(t.includes("=")) t = t.split("=").pop();
+  if(t.includes(":")) t = t.split(":").pop();
+  // Quedarse con alfanumericos y guion
+  t = t.replace(/[^A-Z0-9\-]/g,"").trim();
+  // Si viene con prefijo, buscar patron AP / BR
+  let m = t.match(/(0+.*AP\d+|0+.*BR\d+|[A-Z]{2,}\d+)/);
+  if(m) t = m[0];
+  return t;
+}
+
+// ============ ESCANER CORREGIDO ============
+let stream=null, rafId=null, detector=null, html5Qr=null, escaneando=false;
+
+async function iniciarScan(){
+  document.getElementById('scanStatus').innerText = "Abriendo cámara... permite el acceso";
+  // Intento 1: BarcodeDetector nativo (Chrome Android - el que sí lee QR rápido)
+  if('BarcodeDetector' in window){
+    try{
+      detector = new BarcodeDetector({formats:['qr_code','code_128','code_39','ean_13']});
+      let v = document.getElementById('video'); v.style.display='block';
+      stream = await navigator.mediaDevices.getUserMedia({video:{facingMode:"environment"}, audio:false});
+      v.srcObject = stream; await v.play(); escaneando=true;
+      loopDetectar(v);
+      document.getElementById('scanStatus').innerText = "✅ Cámara nativa activa - acerca el QR";
+      return;
+    }catch(e){ console.log("Detector falló, uso fallback", e); }
+  }
+  // Intento 2: html5-qrcode fallback
+  try{
+    html5Qr = new Html5Qrcode("reader");
+    await html5Qr.start({facingMode:"environment"}, {fps:10, qrbox:{width:260,height:260}}, (txt)=> onScan(txt));
+    document.getElementById('scanStatus').innerText = "✅ Cámara html5 activa - acerca el QR";
+  }catch(e){
+    document.getElementById('scanStatus').innerText = "❌ No se pudo abrir cámara. Usa SUBIR FOTO DEL QR. Error: "+e.message;
+    alert("No se pudo abrir cámara. Asegúrate de usar HTTPS y dar permiso. Puedes usar SUBIR FOTO.");
+  }
+}
+async function loopDetectar(video){
+  if(!escaneando) return;
+  try{
+    let codes = await detector.detect(video);
+    if(codes.length){ onScan(codes[0].rawValue); return; }
+  }catch(e){}
+  rafId = requestAnimationFrame(()=>loopDetectar(video));
+}
+async function detenerScan(){
+  escaneando=false; if(rafId) cancelAnimationFrame(rafId);
+  if(stream){ stream.getTracks().forEach(t=>t.stop()); stream=null; document.getElementById('video').style.display='none'; }
+  if(html5Qr){ try{ await html5Qr.stop(); html5Qr.clear(); }catch(e){} html5Qr=null; }
+}
+function onScan(raw){
+  let codigo = limpiarCodigo(raw);
+  document.getElementById('q').value = codigo;
+  document.getElementById('scanStatus').innerText = "QR leído: "+raw+" → Código: "+codigo;
+  // Vibrar si se puede
+  if(navigator.vibrate) navigator.vibrate(120);
+  detenerScan();
+  buscar();
+}
+// Subir foto del QR
+async function leerFoto(e){
+  let file = e.target.files[0]; if(!file) return;
+  if('BarcodeDetector' in window){
+    try{
+      let det = new BarcodeDetector({formats:['qr_code']});
+      let bmp = await createImageBitmap(file);
+      let codes = await det.detect(bmp);
+      if(codes.length){ onScan(codes[0].rawValue); return; }
+    }catch(err){}
+  }
+  // Fallback html5
+  try{
+    let h = new Html5Qrcode("reader");
+    let res = await h.scanFile(file, true);
+    onScan(res);
+  }catch(err){ alert("No se pudo leer el QR de la foto. Intenta más cerca y con luz."); }
+}
+
+// ============ BUSQUEDA STOCK ============
+function buscar(){
+  let q = limpiarCodigo(document.getElementById('q').value);
+  document.getElementById('q').value = q;
+  if(!q){ alert("Escanea o escribe el código"); return; }
+  actual = INVENTARIO.filter(r => r.codigo.includes(q) || r.lote.includes(q) || r.articulo.includes(q));
+  render(actual, q);
+}
+function mostrarTodos(){ actual = [...INVENTARIO]; render(actual, "TODOS"); }
+
+function render(res, q){
+  if(!res.length){
+    document.getElementById('resumen').innerHTML = `<div class="card">❌ No encontrado <b>${q}</b></div>`;
+    document.getElementById('detalle').innerHTML=""; document.getElementById('conteoCard').style.display="none"; return;
+  }
+  let totalDisp = res.reduce((a,r)=>a+r.disp,0);
+  let totalSaldo = res.reduce((a,r)=>a+r.saldo,0);
+  document.getElementById('resumen').innerHTML = `
+    <div class="card"><div class="art">${res[0].articulo}</div>
+    <div class="small">Código: ${res[0].codigo} • Búsqueda: ${q} • ${res.length} ubicación(es)/lote(s)</div>
+    <div class="kpi" style="margin-top:10px"><div><b>${totalDisp}</b><span>DISPONIBLE TOTAL SISTEMA</span></div><div><b>${totalSaldo}</b><span>SALDO TOTAL</span></div></div></div>`;
+
+  let filas = res.map((r,i)=>{
+    let badge = r.disp>0 ? `<span class="badge ok">Disponible</span>` : `<span class="badge bad">Sin stock</span>`;
+    return `<tr><td><b>${r.almacen}</b><br><span class="small">Lote: ${r.lote||"-"} | ${r.codigo}</span></td>
+    <td><b>${r.ubic}</b><br>${badge}</td>
+    <td>Saldo ${r.saldo}<br>Comp ${r.comp}<br><b>Disp ${r.disp}</b></td><td>${r.kilos} kg</td></tr>`;
+  }).join("");
+  document.getElementById('detalle').innerHTML = `<div class="card"><b>📍 Stock por Ubicación / Lote</b><div style="overflow:auto"><table><tr><th>Almacén / Lote</th><th>Ubicación</th><th>Stock</th><th>Kilos</th></tr>${filas}</table></div></div>`;
+
+  // Llenar selector de conteo
+  let sel = document.getElementById('selLote');
+  sel.innerHTML = res.map((r,i)=>`<option value="${i}">${r.ubic} | Lote ${r.lote||"-"} | ${r.almacen} | Sistema: ${r.disp}</option>`).join("");
+  document.getElementById('conteoCard').style.display="block";
+  document.getElementById('cantEncontrada').value="";
+  document.getElementById('previewDiff').innerHTML="";
+  document.getElementById('cantEncontrada').oninput = ()=>{
+    let idx = sel.value; let sist = res[idx].disp; let enc = parseFloat(document.getElementById('cantEncontrada').value||0);
+    let dif = enc - sist;
+    let cls = dif===0?"ok":dif<0?"diff-neg":"diff-pos";
+    document.getElementById('previewDiff').innerHTML = `Sistema: <b>${sist}</b> | Encontrada: <b>${enc}</b> | Diferencia: <b class="${cls}">${dif>0?"+":""}${dif}</b>`;
+  };
+  document.getElementById('conteoCard').scrollIntoView({behavior:"smooth"});
+}
+
+// ============ REGISTRAR CANTIDAD ENCONTRADA ============
+function guardarConteo(){
+  if(!actual.length) return;
+  let idx = document.getElementById('selLote').value;
+  let r = actual[idx];
+  let enc = parseFloat(document.getElementById('cantEncontrada').value);
+  if(isNaN(enc)){ alert("Escribe la cantidad encontrada"); return; }
+  let dif = enc - r.disp;
+  let reg = {fecha:new Date().toLocaleString(), codigo:r.codigo, lote:r.lote, articulo:r.articulo, almacen:r.almacen, ubic:r.ubic, sistema:r.disp, encontrada:enc, diferencia:dif, obs:document.getElementById('obs').value};
+  conteos.push(reg);
+  localStorage.setItem("ememsa_conteos", JSON.stringify(conteos));
+  renderConteos();
+  alert(`Conteo guardado\n${r.ubic} | Sistema ${r.disp} | Encontrada ${enc} | Dif ${dif}`);
+  document.getElementById('cantEncontrada').value=""; document.getElementById('obs').value="";
+}
+function renderConteos(){
+  document.getElementById('nConteos').innerText = conteos.length;
+  document.getElementById('listaConteos').innerHTML = conteos.slice(-10).reverse().map(c=>{
+    let cls = c.diferencia===0?"ok":c.diferencia<0?"diff-neg":"diff-pos";
+    return `<div style="border-bottom:1px solid #eee;padding:8px 0;font-size:13px"><b>${c.codigo}</b> ${c.ubic} | Lote ${c.lote||"-"}<br>Sistema ${c.sistema} → Encontrada <b>${c.encontrada}</b> → Dif <b class="${cls}">${c.diferencia}</b><br><span class="small">${c.fecha} ${c.obs? "| "+c.obs:""}</span></div>`;
+  }).join("") || "<p class='small'>Sin conteos aún</p>";
+}
+function exportarCSV(){
+  if(!conteos.length){ alert("Sin conteos"); return; }
+  let csv = "Fecha,Codigo,Lote,Articulo,Almacen,Ubicacion,Sistema,Encontrada,Diferencia,Observacion\n";
+  conteos.forEach(c=> csv += `"${c.fecha}","${c.codigo}","${c.lote}","${c.articulo}","${c.almacen}","${c.ubic}",${c.sistema},${c.encontrada},${c.diferencia},"${c.obs}"\n`);
+  let blob = new Blob(["\ufeff"+csv], {type:"text/csv"});
+  let a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "inventario_ememsa_"+new Date().toISOString().slice(0,10)+".csv"; a.click();
+}
+function borrarConteos(){ if(confirm("¿Borrar todos los conteos locales?")){ conteos=[]; localStorage.removeItem("ememsa_conteos"); renderConteos(); } }
+</script>
+</body>
+</html>
