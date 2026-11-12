@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>EMEMSA - Inventario QR - Sin Azure</title>
+<meta name="theme-color" content="#0b3d91">
+<link rel="manifest" href="manifest.json">
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
+<style>
+*{box-sizing:border-box} body{font-family:system-ui,Arial;margin:0;background:#eef1f5}
+header{background:#0b3d91;color:#fff;padding:14px 16px;position:sticky;top:0;z-index:10}
+header h1{margin:0;font-size:18px} header p{margin:2px 0 0;font-size:12px;opacity:.85}
+main{padding:12px;padding-bottom:90px;max-width:720px;margin:auto}
+.card{background:#fff;border-radius:14px;padding:14px;margin:10px 0;box-shadow:0 2px 8px rgba(0,0,0,.08)}
+.btn{width:100%;padding:14px;border:0;border-radius:10px;font-size:16px;font-weight:700;cursor:pointer;margin-top:8px}
+.btn-blue{background:#0b5ed7;color:#fff} .btn-dark{background:#111;color:#fff} .btn-green{background:#0a7a42;color:#fff} .btn-outline{background:#fff;border:1px solid #ccc}
+input,select{width:100%;padding:13px;border-radius:10px;border:1px solid #ccc;font-size:16px;margin:6px 0}
+#reader{border-radius:12px;overflow:hidden;background:#000;min-height:260px}
+#video{width:100%;border-radius:12px;background:#000;display:none}
+.kpi{display:flex;gap:8px} .kpi div{flex:1;background:#f0f7ff;border-radius:10px;padding:10px;text-align:center}
+.kpi b{font-size:22px;display:block}
+table{width:100%;border-collapse:collapse;font-size:13px} th{text-align:left;background:#f2f2f2;padding:8px} td{padding:8px;border-bottom:1px solid #eee}
+.badge{display:inline-block;padding:3px 8px;border-radius:20px;font-size:11px;font-weight:700}
+.ok{background:#d9f7e3;color:#0a7a42} .warn{background:#ffe9a8;color:#7a5a00} .bad{background:#ffd6d6;color:#a00}
+.small{font-size:12px;color:#666} .art{font-size:16px;font-weight:800}
+</style>
+</head>
+<body>
+<header><h1>📦 EMEMSA - INVENTARIO QR</h1><p>Sin Azure • Lee OneDrive • Cantidad Encontrada</p></header>
+<main>
+
+<div class="card" style="border:2px solid #0b3d91">
+  <b>🔗 Cargar Excel de OneDrive</b>
+  <p class="small" id="connStatus">Pulsa CARGAR para leer los 2 Excel. Si el link es privado, usa SUBIR EXCEL.</p>
+  <button class="btn btn-blue" onclick="cargarDesdeOneDrive()">🔄 CARGAR DESDE ONEDRIVE</button>
+  <label class="btn btn-outline" style="display:block;text-align:center">📁 SUBIR EXCEL DESDE EL CELULAR
+    <input type="file" id="fileExcel" accept=".xlsx,.xls,.csv" multiple style="display:none" onchange="subirExcel(event)">
+  </label>
+  <p class="small" id="fuenteInfo">Fuente actual: DATA EJEMPLO</p>
+</div>
+
+<div class="card">
+  <b>1. Escanear QR del artículo</b>
+  <p class="small">Tu QR contiene el <b>Código</b> ej: 0000000AP14</p>
+  <video id="video" playsinline muted></video>
+  <div id="reader"></div>
+  <button class="btn btn-dark" onclick="iniciarScan()">📷 INICIAR ESCÁNER</button>
+  <button class="btn btn-outline" onclick="detenerScan()">⏹ Detener cámara</button>
+  <label class="btn btn-outline" style="display:block;text-align:center">📁 O SUBIR FOTO DEL QR
+    <input type="file" id="fileQR" accept="image/*" style="display:none" onchange="leerFoto(event)">
+  </label>
+  <p class="small" id="scanStatus">Requiere HTTPS + permiso de cámara.</p>
+</div>
+
+<div class="card">
+  <b>2. Buscar manual</b>
+  <input id="q" placeholder="Código ej: 0000000AP14 o Lote ej: 1-56198">
+  <button class="btn btn-blue" onclick="buscar()">🔍 CONSULTAR STOCK</button>
+  <button class="btn btn-outline" onclick="mostrarTodos()">Ver todo</button>
+  <p class="small">Registros: <b id="count">0</b> | Última carga: <span id="lastSync">-</span></p>
+</div>
+
+<div id="resumen"></div>
+<div id="detalle"></div>
+
+<div class="card" id="conteoCard" style="display:none">
+  <b>3. Registrar Cantidad Encontrada (Inventario)</b>
+  <label>Ubicación / Lote a contar</label><select id="selLote"></select>
+  <label>Cantidad Encontrada (física)</label>
+  <input id="cantEncontrada" type="number" inputmode="numeric" placeholder="Ej: 1090">
+  <label>Observación</label><input id="obs" placeholder="Ej: Caja abierta...">
+  <div id="previewDiff" class="small"></div>
+  <button class="btn btn-green" onclick="guardarConteo()">✅ GUARDAR CONTEO</button>
+</div>
+
+<div class="card">
+  <b>📋 Conteos guardados: <span id="nConteos">0</span></b>
+  <div id="listaConteos"></div>
+  <button class="btn btn-blue" onclick="exportarCSV()">⬇ EXPORTAR CONTEOS CSV</button>
+  <button class="btn btn-outline" onclick="borrarConteos()">🗑 Borrar conteos locales</button>
+</div>
+</main>
+
+<script>
+// ==================== 👇 SOLO CAMBIA ESTO SI QUIERES CARGA AUTOMÁTICA 👇 ====================
+// Pega aquí los 2 links nuevos de OneDrive en modo "Cualquiera con el vínculo puede ver"
+// Si los dejas como están, usa el botón SUBIR EXCEL
+const LINKS_ONEDRIVE = [
+  "https://ememsasac.sharepoint.com/:x:/s/StaffAlmacen/IQCxOSg9VHOPTJQR4YBuiHIaAam2njMUuwUBuuR-4N_fon8?e=BCeXdm",
+  "https://ememsasac.sharepoint.com/:x:/s/StaffAlmacen/IQDKvuqMTfKWS5woG8CuO7TMAX6uZ0veuoI2xuZdpt80pOg?e=YqS3kw"
+];
+// ===========================================================================================
+
+let INVENTARIO = [
+ {almacen:"61 - PT SERIADA - LURIN", codigo:"0000000AP14", lote:"1-56198", articulo:"CASQUILLO MANG. BAJA PRESION Ø1/4\"", ubic:"E-083-05", um:"NIU", saldo:1091, comp:0, disp:1091, kilos:8.1825, prio:1},
+ {almacen:"69 - Almacen de faltantes", codigo:"0000000AP14", lote:"01-0052931", articulo:"CASQUILLO MANG. BAJA PRESION Ø1/4\"", ubic:"SIN UBICACION-S/U-S/U", um:"NIU", saldo:2, comp:0, disp:2, kilos:0.015, prio:99},
+ {almacen:"61 - PT SERIADA - LURIN", codigo:"0000000AP15", lote:"1-56199", articulo:"CASQUILLO MANG. BAJA PRESION Ø5/16\"", ubic:"E-082-01", um:"NIU", saldo:1, comp:0, disp:1, kilos:0.0113, prio:1},
+];
+let actual=[]; let conteos = JSON.parse(localStorage.getItem("ememsa_conteos")||"[]");
+document.getElementById('count').innerText = INVENTARIO.length; renderConteos();
+
+// ============ CONVERTIR LINK DE ONEDRIVE A DESCARGA DIRECTA ============
+function linkADescarga(url){
+  // SharePoint: cambiar ?e=xxx por ?download=1
+  if(url.includes("?")) return url.split("?")[0] + "?download=1";
+  return url + "?download=1";
+}
+
+// ============ CARGAR DESDE ONEDRIVE SIN LOGIN ============
+async function cargarDesdeOneDrive(){
+  document.getElementById('connStatus').innerText = "Descargando 2 Excel...";
+  let todos=[];
+  for(let link of LINKS_ONEDRIVE){
+    try{
+      let dl = linkADescarga(link);
+      let res = await fetch(dl);
+      if(!res.ok) throw new Error("No se pudo descargar - verifica que el link sea 'Cualquiera con el vínculo puede ver'");
+      let buf = await res.arrayBuffer();
+      let filas = parsearExcel(buf, link);
+      todos = todos.concat(filas);
+    }catch(e){ console.error(e); document.getElementById('connStatus').innerText = "⚠️ " + e.message + " - Usa SUBIR EXCEL."; }
+  }
+  if(todos.length){ aplicarInventario(todos, "ONEDRIVE"); }
+  else { document.getElementById('connStatus').innerText = "⚠️ No se pudo descargar. El link sigue privado. Usa SUBIR EXCEL desde el celular."; }
+}
+
+// ============ SUBIR EXCEL MANUAL DESDE EL CELULAR ============
+async function subirExcel(e){
+  let files = e.target.files; if(!files.length) return;
+  let todos=[];
+  for(let f of files){
+    let buf = await f.arrayBuffer();
+    let filas = parsearExcel(buf, f.name);
+    todos = todos.concat(filas);
+  }
+  if(todos.length){ aplicarInventario(todos, "ARCHIVO SUBIDO: " + Array.from(files).map(f=>f.name).join(", ")); }
+  else alert("No se encontraron filas. Verifica que el Excel tenga encabezados.");
+}
+
+function parsearExcel(buf, nombreArchivo){
+  let wb = XLSX.read(buf, {type:"array"});
+  // Buscar la hoja que tenga datos - si hay varias, probar la primera con más filas
+  let mejorHoja = wb.SheetNames[0]; let maxFilas = 0;
+  wb.SheetNames.forEach(n=>{
+    let r = XLSX.utils.sheet_to_json(wb.Sheets[n], {defval:""});
+    if(r.length > maxFilas){ maxFilas = r.length; mejorHoja = n; }
+  });
+  let ws = wb.Sheets[mejorHoja];
+  let rows = XLSX.utils.sheet_to_json(ws, {defval:""});
+  let out=[];
+  rows.forEach(r=>{
+    let get = (names)=>{ for(let n of names){ for(let k in r){ if(k.toLowerCase().replace(/[^a-z]/g,"").includes(n)) return r[k]; } } return ""; };
+    let codigo = String(get(["codigo","cod"])).trim().toUpperCase(); if(!codigo || codigo==="CODIGO") return;
+    // Saltar filas de título
+    if(codigo.includes("ALMACEN") || codigo.includes("EMEMSA")) return;
+    out.push({ almacen:String(get(["almacen"])||""), codigo:codigo, lote:String(get(["scod","lote"])||""), articulo:String(get(["articulo","descripcion"])||""), ubic:String(get(["ubicacion","ubic"])||"SIN UBICACION"), um:String(get(["umed"])||"NIU"), saldo:parseFloat(get(["saldo"])||0), comp:parseFloat(get(["comprometido"])||0), disp:parseFloat(get(["disponible"])||0), kilos:parseFloat(get(["kilos"])||0), prio:parseInt(get(["prioridad"])||99), _file:nombreArchivo });
+  });
+  return out;
+}
+function aplicarInventario(todos, fuente){
+  INVENTARIO = todos;
+  document.getElementById('count').innerText = INVENTARIO.length;
+  document.getElementById('lastSync').innerText = new Date().toLocaleString();
+  document.getElementById('fuenteInfo').innerText = "Fuente actual: ✅ " + fuente + " - " + INVENTARIO.length + " registros";
+  document.getElementById('connStatus').innerText = "✅ Cargado: " + INVENTARIO.length + " registros";
+}
+
+// ============ QR ============
+function limpiarCodigo(raw){ if(!raw) return ""; let t=String(raw).trim().toUpperCase(); if(t.includes("=")) t=t.split("=").pop(); if(t.includes(":")) t=t.split(":").pop(); t=t.replace(/[^A-Z0-9\-]/g,"").trim(); return t; }
+let stream=null, rafId=null, detector=null, html5Qr=null, escaneando=false;
+async function iniciarScan(){
+  document.getElementById('scanStatus').innerText="Abriendo cámara...";
+  if('BarcodeDetector' in window){
+    try{ detector=new BarcodeDetector({formats:['qr_code','code_128','code_39','ean_13']}); let v=document.getElementById('video'); v.style.display='block'; stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:"environment"},audio:false}); v.srcObject=stream; await v.play(); escaneando=true; loopDetectar(v); document.getElementById('scanStatus').innerText="✅ Cámara nativa activa - acerca el QR"; return; }catch(e){}
+  }
+  try{ html5Qr=new Html5Qrcode("reader"); await html5Qr.start({facingMode:"environment"},{fps:10,qrbox:{width:260,height:260}},(txt)=>onScan(txt)); document.getElementById('scanStatus').innerText="✅ Cámara activa"; }catch(e){ document.getElementById('scanStatus').innerText="❌ Cámara bloqueada. Usa SUBIR FOTO. Necesitas HTTPS."; }
+}
+async function loopDetectar(video){ if(!escaneando) return; try{ let codes=await detector.detect(video); if(codes.length){ onScan(codes[0].rawValue); return; } }catch(e){} rafId=requestAnimationFrame(()=>loopDetectar(video)); }
+async function detenerScan(){ escaneando=false; if(rafId) cancelAnimationFrame(rafId); if(stream){ stream.getTracks().forEach(t=>t.stop()); stream=null; document.getElementById('video').style.display='none'; } if(html5Qr){ try{ await html5Qr.stop(); html5Qr.clear(); }catch(e){} html5Qr=null; } }
+function onScan(raw){ let codigo=limpiarCodigo(raw); document.getElementById('q').value=codigo; document.getElementById('scanStatus').innerText="QR leído: "+raw+" → Código: "+codigo; if(navigator.vibrate) navigator.vibrate(120); detenerScan(); buscar(); }
+async function leerFoto(e){ let file=e.target.files[0]; if(!file) return; if('BarcodeDetector' in window){ try{ let det=new BarcodeDetector({formats:['qr_code']}); let bmp=await createImageBitmap(file); let codes=await det.detect(bmp); if(codes.length){ onScan(codes[0].rawValue); return; } }catch(err){} } try{ let h=new Html5Qrcode("reader"); let res=await h.scanFile(file,true); onScan(res); }catch(err){ alert("No se pudo leer la foto."); } }
+
+// ============ BUSQUEDA + CONTEO ============
+function buscar(){ let q=limpiarCodigo(document.getElementById('q').value); document.getElementById('q').value=q; if(!q){ alert("Escanea o escribe el código"); return; } actual=INVENTARIO.filter(r=>r.codigo.includes(q)||r.lote.includes(q)||r.articulo.toUpperCase().includes(q)); render(actual,q); }
+function mostrarTodos(){ actual=[...INVENTARIO]; render(actual,"TODOS"); }
+function render(res,q){
+  if(!res.length){ document.getElementById('resumen').innerHTML=`<div class="card">❌ No encontrado <b>${q}</b></div>`; document.getElementById('detalle').innerHTML=""; document.getElementById('conteoCard').style.display="none"; return; }
+  let totalDisp=res.reduce((a,r)=>a+r.disp,0); let totalSaldo=res.reduce((a,r)=>a+r.saldo,0);
+  document.getElementById('resumen').innerHTML=`<div class="card"><div class="art">${res[0].articulo}</div><div class="small">Código: ${res[0].codigo} • ${res.length} ubicación(es)/lote(s)</div><div class="kpi" style="margin-top:10px"><div><b>${totalDisp}</b><span>DISPONIBLE TOTAL</span></div><div><b>${totalSaldo}</b><span>SALDO TOTAL</span></div></div></div>`;
+  let filas=res.map(r=>`<tr><td><b>${r.almacen}</b><br><span class="small">Lote: ${r.lote||"-"} | ${r.codigo}</span></td><td><b>${r.ubic}</b></td><td>Saldo ${r.saldo}<br>Comp ${r.comp}<br><b>Disp ${r.disp}</b></td><td>${r.kilos} kg</td></tr>`).join("");
+  document.getElementById('detalle').innerHTML=`<div class="card"><b>📍 Stock por Ubicación / Lote</b><div style="overflow:auto"><table><tr><th>Almacén / Lote</th><th>Ubicación</th><th>Stock</th><th>Kilos</th></tr>${filas}</table></div></div>`;
+  let sel=document.getElementById('selLote'); sel.innerHTML=res.map((r,i)=>`<option value="${i}">${r.ubic} | Lote ${r.lote||"-"} | ${r.almacen} | Sistema: ${r.disp}</option>`).join("");
+  document.getElementById('conteoCard').style.display="block"; document.getElementById('cantEncontrada').value=""; document.getElementById('previewDiff').innerHTML="";
+  document.getElementById('cantEncontrada').oninput=()=>{ let sist=res[sel.value].disp; let enc=parseFloat(document.getElementById('cantEncontrada').value||0); let dif=enc-sist; document.getElementById('previewDiff').innerHTML=`Sistema: <b>${sist}</b> | Encontrada: <b>${enc}</b> | Diferencia: <b>${dif>0?"+":""}${dif}</b>`; };
+  document.getElementById('conteoCard').scrollIntoView({behavior:"smooth"});
+}
+function guardarConteo(){
+  if(!actual.length) return; let r=actual[document.getElementById('selLote').value]; let enc=parseFloat(document.getElementById('cantEncontrada').value); if(isNaN(enc)){ alert("Escribe la cantidad encontrada"); return; }
+  let dif=enc-r.disp; let reg={fecha:new Date().toLocaleString(),codigo:r.codigo,lote:r.lote,articulo:r.articulo,almacen:r.almacen,ubic:r.ubic,sistema:r.disp,encontrada:enc,diferencia:dif,obs:document.getElementById('obs').value};
+  conteos.push(reg); localStorage.setItem("ememsa_conteos",JSON.stringify(conteos)); renderConteos(); alert(`Conteo guardado\n${r.ubic} | Sistema ${r.disp} | Encontrada ${enc} | Dif ${dif}`); document.getElementById('cantEncontrada').value=""; document.getElementById('obs').value="";
+}
+function renderConteos(){ document.getElementById('nConteos').innerText=conteos.length; document.getElementById('listaConteos').innerHTML=conteos.slice(-10).reverse().map(c=>`<div style="border-bottom:1px solid #eee;padding:8px 0;font-size:13px"><b>${c.codigo}</b> ${c.ubic} | Lote ${c.lote||"-"}<br>Sistema ${c.sistema} → Encontrada <b>${c.encontrada}</b> → Dif <b>${c.diferencia}</b><br><span class="small">${c.fecha} ${c.obs? "| "+c.obs:""}</span></div>`).join("")||"<p class='small'>Sin conteos aún</p>"; }
+function exportarCSV(){ if(!conteos.length){ alert("Sin conteos"); return; } let csv="Fecha,Codigo,Lote,Articulo,Almacen,Ubicacion,Sistema,Encontrada,Diferencia,Observacion\n"; conteos.forEach(c=>csv+=`"${c.fecha}","${c.codigo}","${c.lote}","${c.articulo}","${c.almacen}","${c.ubic}",${c.sistema},${c.encontrada},${c.diferencia},"${c.obs}"\n`); let blob=new Blob(["\ufeff"+csv],{type:"text/csv"}); let a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download="inventario_ememsa_"+new Date().toISOString().slice(0,10)+".csv"; a.click(); }
+function borrarConteos(){ if(confirm("¿Borrar conteos?")){ conteos=[]; localStorage.removeItem("ememsa_conteos"); renderConteos(); } }
+</script>
+</body>
+</html>
